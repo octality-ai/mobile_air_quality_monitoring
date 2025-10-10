@@ -1,0 +1,43 @@
+# Data files
+*.csv
+*.lnk
+
+# Lock files
+.~lock.*
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# IDE and editors
+.vscode/
+.config/
+.claude/
+*.swp
+*.swo
+*~
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Vendor Provided SDK
+python-i2c-sen66/
+raspberry-pi-i2c-sen66/

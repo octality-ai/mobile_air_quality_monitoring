@@ -1,0 +1,18 @@
+# Core I2C and Serial Communication
+smbus2>=0.4.2
+pyserial>=3.5
+
+# GPS/GNSS Libraries
+pynmeagps>=1.0.0
+pyubx2>=2.7.0
+
+# Sensirion SEN66 Driver and Dependencies
+sensirion-i2c-driver>=1.0.0
+sensirion-driver-adapters>=1.0.0
+sensirion-driver-support-types>=0.1.0
+sensirion-i2c-sen66>=1.0.0
+
+# Development and Testing (optional)
+pytest>=7.0.0
+flake8>=5.0.0
+editorconfig-checker>=2.6.0

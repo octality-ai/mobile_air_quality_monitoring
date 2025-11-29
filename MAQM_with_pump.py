@@ -1,20 +1,23 @@
 #!/usr/bin/env python3
 """
-Mobile Air Quality Monitor (MAQM) - Main Data Logger
-Integrates GNSS (u-blox), SEN66 (Sensirion), and SpecSensor (DGS2-970)
+Mobile Air Quality Monitor (MAQM) with Pump Control - Main Data Logger
+Integrates GNSS (u-blox), SEN66 (Sensirion), SpecSensor (DGS2-970), and 4-wire PWM Pump
 Logs unified data to CSV with 1-second sampling and 60-second buffered writes
+Pump runs at configurable speed during data acquisition
 """
 
 import time
 import csv
 import serial
 import os
+import argparse
 from datetime import datetime
 from smbus2 import SMBus, i2c_msg
 from pynmeagps import NMEAReader
 from sensirion_i2c_driver import LinuxI2cTransceiver, I2cConnection, CrcCalculator
 from sensirion_driver_adapters.i2c_adapter.i2c_channel import I2cChannel
 from sensirion_i2c_sen66.device import Sen66Device
+from pump_controller import PumpController
 
 # ============================================================================
 # Configuration
@@ -40,6 +43,10 @@ SPEC_BAUDRATE = 9600
 # Logging Configuration
 CSV_BUFFER_INTERVAL = 60  # Write to CSV every 60 seconds
 SAMPLE_INTERVAL = 1.0     # Sample every 1 second
+
+# Pump Configuration
+DEFAULT_PUMP_SPEED = 30   # Default pump speed in percent (0-100)
+                          # EDIT THIS VALUE to change default pump speed
 
 
 # ============================================================================
@@ -187,13 +194,25 @@ class SpecSensor:
 
 
 # ============================================================================
-# Main Logger
+# Main Logger with Pump Control
 # ============================================================================
 
 class MAQMLogger:
-    """Main data logger integrating all sensors"""
+    """Main data logger integrating all sensors and pump control"""
 
-    def __init__(self):
+    def __init__(self, pump_speed=DEFAULT_PUMP_SPEED):
+        """
+        Initialize logger with optional pump speed.
+
+        Args:
+            pump_speed: Pump speed in percent (0-100), default is DEFAULT_PUMP_SPEED
+        """
+        # Validate pump speed
+        if not 0 <= pump_speed <= 100:
+            raise ValueError(f"Pump speed must be between 0-100, got {pump_speed}")
+
+        self.pump_speed = pump_speed
+
         # Save CSV to /home/mover/octa/ directory
         csv_dir = "/home/mover/octa"
         csv_filename = f"MAQM_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
@@ -224,6 +243,12 @@ class MAQMLogger:
         self.spec_no2 = SpecSensor(port=SPEC_NO2_SERIAL_PORT)
         self.spec_o3 = SpecSensor(port=SPEC_O3_SERIAL_PORT)
 
+        # Initialize Pump
+        print(f"Initializing pump at {self.pump_speed}% speed...")
+        self.pump = PumpController()
+        self.pump.set_speed_percent(self.pump_speed)
+        print(f"Pump started at {self.pump_speed}%")
+
         # Initialize CSV
         self._initialize_csv()
 
@@ -251,7 +276,9 @@ class MAQMLogger:
             # SpecSensor O3 fields
             "spec_o3_sensor_sn", "spec_o3_ppb", "spec_o3_ppm",
             "spec_o3_temperature_c", "spec_o3_humidity_pct",
-            "spec_o3_adc_g", "spec_o3_adc_t", "spec_o3_adc_h"
+            "spec_o3_adc_g", "spec_o3_adc_t", "spec_o3_adc_h",
+            # Pump fields
+            "pump_speed_percent", "pump_rpm"
         ]
 
         with open(self.csv_file, 'w', newline='') as csvfile:
@@ -259,7 +286,7 @@ class MAQMLogger:
             writer.writeheader()
 
     def _collect_sensor_data(self):
-        """Collect data from all sensors"""
+        """Collect data from all sensors including pump"""
         row = {"timestamp": datetime.now().isoformat()}
 
         # Poll GNSS
@@ -339,6 +366,12 @@ class MAQMLogger:
             "spec_o3_adc_h": spec_o3_data["adc_h"]
         })
 
+        # Read Pump data
+        row.update({
+            "pump_speed_percent": self.pump.get_speed_percent(),
+            "pump_rpm": self.pump.get_rpm()
+        })
+
         return row
 
     def _write_buffer_to_csv(self):
@@ -359,7 +392,7 @@ class MAQMLogger:
             print(f"Error writing to CSV: {e}")
 
     def _print_status(self, row):
-        """Print current sensor readings"""
+        """Print current sensor readings including pump status"""
         # GNSS data
         lat_str = f"{row['gnss_lat']:.6f}" if row['gnss_lat'] is not None else 'N/A'
         lon_str = f"{row['gnss_lon']:.6f}" if row['gnss_lon'] is not None else 'N/A'
@@ -380,15 +413,20 @@ class MAQMLogger:
         no2_str = f"{row['spec_no2_ppm']:.3f}" if row['spec_no2_ppm'] is not None else 'N/A'
         o3_str = f"{row['spec_o3_ppm']:.3f}" if row['spec_o3_ppm'] is not None else 'N/A'
 
+        # Pump data
+        pump_speed_str = f"{row['pump_speed_percent']:.0f}" if row['pump_speed_percent'] is not None else 'N/A'
+        pump_rpm_str = f"{row['pump_rpm']:.0f}" if row['pump_rpm'] is not None else 'N/A'
+
         print(f"[{datetime.now().strftime('%H:%M:%S')}] "
               f"GPS: {lat_str}°,{lon_str}° {speed_str}kn SV:{num_sv_str} HDOP:{hdop_str} | "
               f"T:{temp_str}°C RH:{humid_str}% PM2.5:{pm25_str} CO2:{co2_str} VOC:{voc_str} NOx:{nox_str} | "
               f"CO:{co_str} NO2:{no2_str} O3:{o3_str}ppm | "
+              f"Pump:{pump_speed_str}% {pump_rpm_str}RPM | "
               f"Buf:{len(self.buffer)}")
 
     def run(self):
         """Main logging loop"""
-        print("Starting data collection...")
+        print("Starting data collection with pump...")
         print("Press Ctrl+C to stop")
         print("=" * 80)
 
@@ -428,19 +466,70 @@ class MAQMLogger:
             self.cleanup()
 
     def cleanup(self):
-        """Clean up sensor connections"""
+        """Clean up sensor and pump connections"""
         try:
+            # Stop sensors
             self.sen66.stop_measurement()
             self.sen66_transceiver.close()
             self.gnss.close()
+
+            # Stop pump safely
+            print("Stopping pump...")
+            self.pump.cleanup()
+            print("Pump stopped.")
+
         except Exception as e:
             print(f"Error during cleanup: {e}")
 
 
 # ============================================================================
-# Entry Point
+# Entry Point with Command Line Arguments
 # ============================================================================
 
-if __name__ == "__main__":
-    logger = MAQMLogger()
+def main():
+    """Main entry point with argument parsing"""
+    parser = argparse.ArgumentParser(
+        description='Mobile Air Quality Monitor with Pump Control',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=f"""
+Examples:
+  # Run with default pump speed ({DEFAULT_PUMP_SPEED}%)
+  sudo python3 MAQM_with_pump.py
+
+  # Run with custom pump speed (50%)
+  sudo python3 MAQM_with_pump.py --pump-speed 50
+
+  # Run with pump at 70%
+  sudo python3 MAQM_with_pump.py -p 70
+
+Note: Requires sudo for pump GPIO control.
+        """
+    )
+
+    parser.add_argument(
+        '-p', '--pump-speed',
+        type=int,
+        default=DEFAULT_PUMP_SPEED,
+        metavar='PERCENT',
+        help=f'Pump speed in percent (0-100), default: {DEFAULT_PUMP_SPEED}'
+    )
+
+    args = parser.parse_args()
+
+    # Validate pump speed
+    if not 0 <= args.pump_speed <= 100:
+        parser.error(f"Pump speed must be between 0-100, got {args.pump_speed}")
+
+    # Create and run logger
+    print("=" * 80)
+    print("Mobile Air Quality Monitor with Pump Control")
+    print("=" * 80)
+    print(f"Pump speed: {args.pump_speed}%")
+    print()
+
+    logger = MAQMLogger(pump_speed=args.pump_speed)
     logger.run()
+
+
+if __name__ == "__main__":
+    main()

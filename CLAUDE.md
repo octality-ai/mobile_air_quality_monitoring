@@ -4,10 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Raspberry Pi sensor integration project for reading environmental and GPS data via I2C and UART interfaces. The codebase combines:
+This is a Raspberry Pi sensor integration project for reading environmental and GPS data via I2C and UART interfaces, with hardware PWM pump control. The codebase combines:
 - **Sensirion SEN66** air quality sensor (PM, VOC, NOx, CO2, temperature, humidity) via I2C
 - **DGS2-970** gas sensor via UART/serial
 - **u-blox GNSS** GPS module via I2C/DDC interface
+- **4-wire PWM pump** with speed control and tachometer feedback via hardware PWM
 
 ## Hardware Configuration
 
@@ -17,6 +18,9 @@ This is a Raspberry Pi sensor integration project for reading environmental and 
   - SEN66: Address `0x6B` (default)
   - u-blox GNSS: Address `0x42` (default)
 - **Serial**: `/dev/serial0` at 9600 baud (DGS2-970 sensor)
+- **PWM Control**:
+  - GPIO12 (Physical Pin 32): 4-wire pump PWM control at 25 kHz
+  - GPIO23 (Physical Pin 16): Tachometer feedback input
 
 ## Common Commands
 
@@ -54,6 +58,18 @@ python3 test_ublox_gps.py
 
 # u-blox GPS via I2C (full-featured)
 python3 ublox_gnss_i2c.py
+```
+
+### Running Pump Controller
+```bash
+# Basic pump test (ramps through speeds, displays RPM)
+sudo /home/mover/.octa/bin/python3 pump_controller.py
+
+# Interactive demo with keyboard controls
+sudo /home/mover/.octa/bin/python3 pump_demo.py
+
+# Emergency stop (if pump is running)
+sudo pinctrl set 12 op dh
 ```
 
 ### I2C Troubleshooting
@@ -115,12 +131,28 @@ All I2C communication uses registers:
 - `0xFF`: Data stream register for read/write - u-blox specific
 - SEN66 uses standard I2C without special registers
 
+### Pump Controller Scripts
+- **`pump_controller.py`**: 4-wire PWM pump controller library
+  - Hardware PWM at 25 kHz for smooth speed control (10-30 kHz range)
+  - Inverted logic handling (LOW=run, HIGH=stop) built-in
+  - Tachometer feedback for real-time RPM monitoring
+  - Automatic GPIO configuration (sets GPIO12 to PWM mode on startup)
+  - Safe cleanup (sets GPIO12 HIGH on exit to ensure pump stops)
+  - API: `set_speed_percent(0-100)`, `get_rpm()`, `ramp_speed()`
+
+- **`pump_demo.py`**: Interactive keyboard-controlled demo
+  - Real-time speed and RPM display
+  - Arrow keys for speed adjustment
+  - Smooth ramping and instant stop controls
+
 ### Key Dependencies
 - **smbus2**: Low-level I2C communication
 - **pyserial**: UART/serial communication
 - **pyubx2**: UBX protocol parsing
 - **pynmeagps**: NMEA protocol parsing
 - **sensirion-*** packages**: SEN66 driver framework
+- **rpi-hardware-pwm**: Hardware PWM access for pump control (Pi 5 required)
+- **gpiozero + lgpio**: GPIO input for tachometer (Pi 5 compatible)
 
 ## Development Notes
 
@@ -129,3 +161,7 @@ All I2C communication uses registers:
 - I2C bus speed and chunk size may need tuning for longer cable runs
 - The continuous logger buffers to minimize SD card writes (important for Pi longevity)
 - GPS requires clear sky view; expect 30-60s cold start time for first fix
+- **Pump controller requires sudo** due to `pinctrl` commands for GPIO configuration
+- **Hardware PWM setup required**: Install `rpi-hardware-pwm` and enable `dtoverlay=pwm-2chan` in `/boot/firmware/config.txt`
+- **Pump uses inverted logic**: LOW (0V) = full speed, HIGH (3.3V) = stopped (code handles this automatically)
+- **See PUMP_CONTROLLER_GUIDE.md** for complete pump setup, wiring, and troubleshooting

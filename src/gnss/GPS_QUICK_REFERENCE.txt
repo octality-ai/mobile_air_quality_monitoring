@@ -1,0 +1,68 @@
+========================================================================
+GPS QUICK REFERENCE CARD
+========================================================================
+
+PROGRAMS
+--------
+1. gps_test_raw.py  - Raw I2C diagnostic (troubleshooting)
+2. gps_test.py      - Full GPS display (daily testing)
+3. gps_config.py    - Active antenna config (run once)
+
+FIRST TIME SETUP
+----------------
+python3 gps_config.py   # Enable active antenna power
+python3 gps_test.py     # Verify GPS works
+
+DAILY USE
+---------
+python3 gps_test.py     # Test GPS (config already saved)
+
+TROUBLESHOOTING
+---------------
+python3 gps_test_raw.py # Check raw I2C communication
+i2cdetect -y 1          # Verify GPS at address 0x42
+
+PRODUCTION
+----------
+python3 MAQM_main.py    # Run full sensor logger
+ls -lh data/            # Check CSV output
+
+GPS STATUS CODES
+----------------
+GPS:A = Active (valid fix)
+GPS:V = Void (no fix, searching)
+GPS:? = No data received
+
+DOP VALUES (lower is better)
+-----------------------------
+PDOP = Position DOP (3D accuracy)
+  Good: <6  | Fair: 6-10  | Poor: >10
+
+HDOP = Horizontal DOP (lat/lon accuracy)
+  Good: <2  | Fair: 2-5   | Poor: >5
+
+VDOP = Vertical DOP (altitude accuracy)
+  Good: <3  | Fair: 3-10  | Poor: >10
+
+HARDWARE
+--------
+GPS Module:  SparkFun NEO-M8U (Qwiic)
+I2C Address: 0x42
+Antenna:     CIROCOMM Active Ceramic Patch 25x25x2mm
+Power:       3.3V via VCC_RF (enabled by gps_config.py)
+
+ANTENNA TIPS
+------------
+✓ Flat side UP (ceramic facing sky)
+✓ Clear 360° sky view
+✓ Outdoors for best performance
+✓ Cold start: 30-60 seconds
+✓ Hot start: 1-2 seconds
+
+DOCUMENTATION
+-------------
+GPS_PROGRAMS_GUIDE.md  - Detailed program guide
+GPS_FIX_SUMMARY.md     - GPS troubleshooting history
+MAQM_DOP_FIX.md        - DOP improvements
+
+========================================================================

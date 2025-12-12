@@ -1,0 +1,16 @@
+[Unit]
+Description=Initialize Fan GPIO12 to LOW (0% PWM)
+After=local-fs.target
+Before=shutdown.target reboot.target halt.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Set GPIO12 to output LOW on startup
+ExecStart=/usr/bin/pinctrl set 12 op dl
+# Set GPIO12 to output LOW on shutdown
+ExecStop=/usr/bin/pinctrl set 12 op dl
+
+[Install]
+WantedBy=multi-user.target

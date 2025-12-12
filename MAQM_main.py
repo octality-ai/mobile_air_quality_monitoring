@@ -56,8 +56,9 @@ class UbloxGNSS:
         self.buffer = bytearray()
         self.nmr = NMEAReader(None)
         self.last_position = {"lat": None, "lon": None, "alt": None,
-                             "speed": None, "course": None, "quality": None,
-                             "num_sv": None, "hdop": None}
+                             "speed": None, "quality": None,
+                             "num_sv": None, "hdop": None, "pdop": None, "vdop": None,
+                             "fix_status": None}
 
     def read_available_bytes(self):
         """Check how many bytes are available in the GNSS receive buffer"""
@@ -103,13 +104,15 @@ class UbloxGNSS:
                     if line_str.startswith('$'):
                         msg = self.nmr.parse(line_str)
 
-                        if msg.msgID == "RMC" and msg.status == "A":
-                            self.last_position.update({
-                                "lat": msg.lat,
-                                "lon": msg.lon,
-                                "speed": float(msg.spd) if msg.spd else None,
-                                "course": float(msg.cog) if msg.cog else None
-                            })
+                        if msg.msgID == "RMC":
+                            # Always update fix status, update position only if valid
+                            self.last_position["fix_status"] = msg.status
+                            if msg.status == "A":  # A = Active (valid fix), V = Void (no fix)
+                                self.last_position.update({
+                                    "lat": msg.lat,
+                                    "lon": msg.lon,
+                                    "speed": float(msg.spd) if msg.spd else None
+                                })
 
                         elif msg.msgID == "GGA" and int(msg.quality) > 0:
                             self.last_position.update({
@@ -120,6 +123,15 @@ class UbloxGNSS:
                                 "num_sv": int(msg.numSV) if msg.numSV else None,
                                 "hdop": float(msg.HDOP) if msg.HDOP else None
                             })
+
+                        elif msg.msgID == "GSA":
+                            # GSA: DOP and active satellites - contains PDOP, HDOP, VDOP
+                            if hasattr(msg, 'PDOP') and msg.PDOP:
+                                self.last_position.update({
+                                    "pdop": float(msg.PDOP) if msg.PDOP else None,
+                                    "hdop": float(msg.HDOP) if msg.HDOP else None,
+                                    "vdop": float(msg.VDOP) if msg.VDOP else None
+                                })
                 except Exception:
                     pass
 
@@ -194,8 +206,9 @@ class MAQMLogger:
     """Main data logger integrating all sensors"""
 
     def __init__(self):
-        # Save CSV to /home/mover/octa/ directory
-        csv_dir = "/home/mover/octa"
+        # Save CSV to /home/mover/octa/data/ directory
+        csv_dir = "/home/mover/octa/data"
+        os.makedirs(csv_dir, exist_ok=True)  # Create directory if it doesn't exist
         csv_filename = f"MAQM_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         self.csv_file = os.path.join(csv_dir, csv_filename)
         self.buffer = []
@@ -236,7 +249,8 @@ class MAQMLogger:
             "timestamp",
             # GNSS fields
             "gnss_lat", "gnss_lon", "gnss_alt", "gnss_speed",
-            "gnss_quality", "gnss_num_sv", "gnss_hdop",
+            "gnss_fix_status", "gnss_quality", "gnss_num_sv",
+            "gnss_pdop", "gnss_hdop", "gnss_vdop",
             # SEN66 fields
             "pm1p0", "pm2p5", "pm4p0", "pm10p0",
             "sen66_humidity", "sen66_temperature", "voc_index", "nox_index", "co2",
@@ -270,9 +284,12 @@ class MAQMLogger:
             "gnss_lon": gnss_data["lon"],
             "gnss_alt": gnss_data["alt"],
             "gnss_speed": gnss_data["speed"],
+            "gnss_fix_status": gnss_data["fix_status"],
             "gnss_quality": gnss_data["quality"],
             "gnss_num_sv": gnss_data["num_sv"],
-            "gnss_hdop": gnss_data["hdop"]
+            "gnss_pdop": gnss_data["pdop"],
+            "gnss_hdop": gnss_data["hdop"],
+            "gnss_vdop": gnss_data["vdop"]
         })
 
         # Read SEN66
@@ -361,10 +378,13 @@ class MAQMLogger:
     def _print_status(self, row):
         """Print current sensor readings"""
         # GNSS data
+        fix_status = row['gnss_fix_status'] if row['gnss_fix_status'] is not None else '?'
         lat_str = f"{row['gnss_lat']:.6f}" if row['gnss_lat'] is not None else 'N/A'
         lon_str = f"{row['gnss_lon']:.6f}" if row['gnss_lon'] is not None else 'N/A'
         speed_str = f"{row['gnss_speed']:.1f}" if row['gnss_speed'] is not None else 'N/A'
+        pdop_str = f"{row['gnss_pdop']:.1f}" if row['gnss_pdop'] is not None else 'N/A'
         hdop_str = f"{row['gnss_hdop']:.1f}" if row['gnss_hdop'] is not None else 'N/A'
+        vdop_str = f"{row['gnss_vdop']:.1f}" if row['gnss_vdop'] is not None else 'N/A'
         num_sv_str = f"{row['gnss_num_sv']}" if row['gnss_num_sv'] is not None else 'N/A'
 
         # SEN66 data
@@ -381,7 +401,7 @@ class MAQMLogger:
         o3_str = f"{row['spec_o3_ppm']:.3f}" if row['spec_o3_ppm'] is not None else 'N/A'
 
         print(f"[{datetime.now().strftime('%H:%M:%S')}] "
-              f"GPS: {lat_str}°,{lon_str}° {speed_str}kn SV:{num_sv_str} HDOP:{hdop_str} | "
+              f"GPS:{fix_status} {lat_str}°,{lon_str}° {speed_str}kn SV:{num_sv_str} P/H/V:{pdop_str}/{hdop_str}/{vdop_str} | "
               f"T:{temp_str}°C RH:{humid_str}% PM2.5:{pm25_str} CO2:{co2_str} VOC:{voc_str} NOx:{nox_str} | "
               f"CO:{co_str} NO2:{no2_str} O3:{o3_str}ppm | "
               f"Buf:{len(self.buffer)}")

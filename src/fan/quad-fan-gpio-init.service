@@ -1,0 +1,22 @@
+[Unit]
+Description=Initialize 4 Fan GPIOs to LOW (all fans stopped)
+After=local-fs.target
+Before=shutdown.target reboot.target halt.target
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# Set all 4 GPIOs to output LOW on startup
+ExecStart=/usr/bin/pinctrl set 12 op dl
+ExecStart=/usr/bin/pinctrl set 13 op dl
+ExecStart=/usr/bin/pinctrl set 18 op dl
+ExecStart=/usr/bin/pinctrl set 19 op dl
+# Set all 4 GPIOs to output LOW on shutdown
+ExecStop=/usr/bin/pinctrl set 12 op dl
+ExecStop=/usr/bin/pinctrl set 13 op dl
+ExecStop=/usr/bin/pinctrl set 18 op dl
+ExecStop=/usr/bin/pinctrl set 19 op dl
+
+[Install]
+WantedBy=multi-user.target

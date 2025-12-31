@@ -44,3 +44,4 @@ raspberry-pi-i2c-sen66/
 
 # Data files
 *.csv
+data/

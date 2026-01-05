@@ -1,0 +1,11 @@
+[Unit]
+Description=Thermal-Controlled Case Fans for Raspberry Pi 5
+Documentation=file:///home/octa/octa/src/fan/THERMAL_CONTROL.md
+
+[Service]
+ExecStart=/home/octa/octa/src/fan/start_thermal_control.sh
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

@@ -40,7 +40,7 @@ Choose **ONE** of these methods:
 Install the service that sets all 4 GPIOs LOW at boot and shutdown:
 
 ```bash
-cd /home/mover/octa/src/fan
+cd /home/octa/octa/src/fan
 ./install_quad_fan_gpio.sh
 ```
 
@@ -93,8 +93,8 @@ Expected output (all should show `op dl | lo`):
 Test both groups independently:
 
 ```bash
-cd /home/mover/octa/src/fan
-sudo /home/mover/.octa/bin/python3 dual_fan_controller.py
+cd /home/octa/octa/src/fan
+sudo /home/octa/.octa/bin/python3 dual_fan_controller.py
 ```
 
 This will:
@@ -108,7 +108,7 @@ This will:
 Control both groups independently with keyboard:
 
 ```bash
-sudo /home/mover/.octa/bin/python3 dual_fan_demo.py
+sudo /home/octa/.octa/bin/python3 dual_fan_demo.py
 ```
 
 **Display:**
@@ -204,14 +204,14 @@ sudo pinctrl get 12 13 18 19
 
 ```bash
 # After reboot, install GPIO init service
-cd /home/mover/octa/src/fan
+cd /home/octa/octa/src/fan
 ./install_quad_fan_gpio.sh
 
 # Test fans
-sudo /home/mover/.octa/bin/python3 dual_fan_controller.py
+sudo /home/octa/.octa/bin/python3 dual_fan_controller.py
 
 # Interactive control
-sudo /home/mover/.octa/bin/python3 dual_fan_demo.py
+sudo /home/octa/.octa/bin/python3 dual_fan_demo.py
 
 # Emergency stop all fans
 for gpio in 12 13 18 19; do sudo pinctrl set $gpio op dl; done

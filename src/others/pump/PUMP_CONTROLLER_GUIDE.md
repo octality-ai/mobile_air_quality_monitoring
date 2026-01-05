@@ -178,7 +178,7 @@ groups | grep gpio
 Run the test program to verify everything works:
 
 ```bash
-sudo /home/mover/.octa/bin/python3 pump_controller.py
+sudo /home/octa/.octa/bin/python3 pump_controller.py
 ```
 
 **Expected behavior:**
@@ -192,7 +192,7 @@ sudo /home/mover/.octa/bin/python3 pump_controller.py
 Run the interactive controller with keyboard controls:
 
 ```bash
-sudo /home/mover/.octa/bin/python3 pump_demo.py
+sudo /home/octa/.octa/bin/python3 pump_demo.py
 ```
 
 **Controls:**
@@ -338,7 +338,7 @@ sudo reboot
 
 **Or run with sudo:**
 ```bash
-sudo /home/mover/.octa/bin/python3 pump_controller.py
+sudo /home/octa/.octa/bin/python3 pump_controller.py
 ```
 
 ### RPM Always Shows 0
@@ -501,10 +501,10 @@ grep pwm /boot/firmware/config.txt
 
 ```bash
 # Basic test
-sudo /home/mover/.octa/bin/python3 pump_controller.py
+sudo /home/octa/.octa/bin/python3 pump_controller.py
 
 # Interactive demo
-sudo /home/mover/.octa/bin/python3 pump_demo.py
+sudo /home/octa/.octa/bin/python3 pump_demo.py
 ```
 
 ---

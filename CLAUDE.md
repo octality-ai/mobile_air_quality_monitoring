@@ -19,8 +19,11 @@ This is a Raspberry Pi sensor integration project for reading environmental and 
   - u-blox GNSS: Address `0x42` (default)
 - **Serial**: `/dev/serial0` at 9600 baud (DGS2-970 sensor)
 - **PWM Control**:
-  - GPIO12 (Physical Pin 32): 4-wire pump PWM control at 25 kHz
-  - GPIO23 (Physical Pin 16): Tachometer feedback input
+  - GPIO12 (Physical Pin 32): 4-wire pump PWM control OR Fan Group 1 at 25 kHz
+  - GPIO13 (Physical Pin 33): Fan Group 2 at 25 kHz
+  - GPIO18 (Physical Pin 12): Fan Group 1 at 25 kHz
+  - GPIO19 (Physical Pin 35): Fan Group 2 at 25 kHz
+  - GPIO23 (Physical Pin 16): Tachometer feedback input (pump only)
 
 ## Common Commands
 
@@ -63,13 +66,33 @@ python3 ublox_gnss_i2c.py
 ### Running Pump Controller
 ```bash
 # Basic pump test (ramps through speeds, displays RPM)
-sudo /home/mover/.octa/bin/python3 pump_controller.py
+sudo /home/octa/.octa/bin/python3 pump_controller.py
 
 # Interactive demo with keyboard controls
-sudo /home/mover/.octa/bin/python3 pump_demo.py
+sudo /home/octa/.octa/bin/python3 pump_demo.py
 
 # Emergency stop (if pump is running)
 sudo pinctrl set 12 op dh
+```
+
+### Running Thermal Fan Controller
+```bash
+# Manual test (watch fans respond to CPU temperature)
+cd /home/octa/octa/src/fan
+sudo /home/octa/.octa/bin/python3 thermal_fan_controller.py
+
+# Install as systemd service (auto-start at boot)
+cd /home/octa/octa/src/fan
+./install_thermal_service.sh
+
+# Check service status
+sudo systemctl status thermal-fan-control.service
+
+# View live logs
+sudo journalctl -u thermal-fan-control.service -f
+
+# Emergency stop all fans
+for gpio in 12 13 18 19; do sudo pinctrl set $gpio op dl; done
 ```
 
 ### I2C Troubleshooting
@@ -145,6 +168,35 @@ All I2C communication uses registers:
   - Arrow keys for speed adjustment
   - Smooth ramping and instant stop controls
 
+### Thermal Fan Controller Scripts (`src/fan/`)
+- **`thermal_fan_controller.py`**: Automatic CPU temperature-based fan control
+  - Reads CPU temperature from `/sys/class/thermal/thermal_zone0/temp`
+  - Two modes: smooth temperature curve (default) or follow Pi's fan states
+  - Controls 4 PWM fans in 2 groups (heat sink + air sampling)
+  - Smart logging: verbose in terminal, quiet when running as service
+  - Auto-restart on failure via systemd
+  - Resource usage: ~13MB RAM, 0.05% CPU
+
+- **`dual_fan_controller.py`**: Dual-group PWM fan control library
+  - Group 1 (GPIO12, GPIO18): Heat sink fans
+  - Group 2 (GPIO13, GPIO19): Air sampling fans
+  - Hardware PWM at 25 kHz
+  - Independent speed control per group
+
+- **`start_thermal_control.sh`**: Wrapper script for systemd service
+  - Sets working directory and executes thermal controller
+  - Allows easy parameter modification
+
+- **`thermal-fan-control.service`**: systemd service definition
+  - Auto-start at boot
+  - Auto-restart on crash (10s delay)
+  - Minimal configuration for maximum reliability
+
+- **`install_thermal_service.sh`**: One-command service installer
+  - Copies service file to /etc/systemd/system/
+  - Enables and starts service
+  - Shows status and useful commands
+
 ### Key Dependencies
 - **smbus2**: Low-level I2C communication
 - **pyserial**: UART/serial communication
@@ -165,3 +217,7 @@ All I2C communication uses registers:
 - **Hardware PWM setup required**: Install `rpi-hardware-pwm` and enable `dtoverlay=pwm-2chan` in `/boot/firmware/config.txt`
 - **Pump uses inverted logic**: LOW (0V) = full speed, HIGH (3.3V) = stopped (code handles this automatically)
 - **See PUMP_CONTROLLER_GUIDE.md** for complete pump setup, wiring, and troubleshooting
+- **Thermal fan controller runs as systemd service**: Auto-starts at boot, auto-restarts on crash
+- **Fan PWM uses normal logic**: HIGH = run, LOW = stopped (opposite of pump)
+- **Python is optimal for thermal control**: 13MB RAM overhead is negligible vs. maintainability benefits
+- **See THERMAL_CONTROL.md** for complete thermal fan setup and service configuration

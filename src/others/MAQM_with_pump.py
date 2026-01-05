@@ -213,8 +213,8 @@ class MAQMLogger:
 
         self.pump_speed = pump_speed
 
-        # Save CSV to /home/mover/octa/ directory
-        csv_dir = "/home/mover/octa"
+        # Save CSV to /home/octa/octa/data/ directory
+        csv_dir = "/home/octa/octa/data"
         csv_filename = f"MAQM_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         self.csv_file = os.path.join(csv_dir, csv_filename)
         self.buffer = []

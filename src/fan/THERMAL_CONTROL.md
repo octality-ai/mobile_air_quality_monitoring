@@ -45,7 +45,7 @@ Reads CPU temperature directly and uses continuous curves for smoother transitio
 
 Run with smooth temperature curve:
 ```bash
-sudo /home/mover/.octa/bin/python3 thermal_fan_controller.py
+sudo /home/octa/.octa/bin/python3 thermal_fan_controller.py
 ```
 
 This will:
@@ -56,14 +56,14 @@ This will:
 
 To exactly match Pi's fan behavior:
 ```bash
-sudo /home/mover/.octa/bin/python3 thermal_fan_controller.py --mode state
+sudo /home/octa/.octa/bin/python3 thermal_fan_controller.py --mode state
 ```
 
 ### Control Group 2 While Running
 
 Set Group 2 (air sampling) to run at fixed speed:
 ```bash
-sudo /home/mover/.octa/bin/python3 thermal_fan_controller.py --group2 75
+sudo /home/octa/.octa/bin/python3 thermal_fan_controller.py --group2 75
 ```
 
 This runs:
@@ -74,13 +74,13 @@ This runs:
 
 Check temperature every 5 seconds (default is 2s):
 ```bash
-sudo /home/mover/.octa/bin/python3 thermal_fan_controller.py --interval 5
+sudo /home/octa/.octa/bin/python3 thermal_fan_controller.py --interval 5
 ```
 
 ### All Options Combined
 
 ```bash
-sudo /home/mover/.octa/bin/python3 thermal_fan_controller.py \
+sudo /home/octa/.octa/bin/python3 thermal_fan_controller.py \
     --mode temp \
     --interval 2 \
     --group2 80
@@ -115,50 +115,108 @@ Temp:  61.3°C | Group 1:  52% | Group 2:   0%
 
 ## Running as a Service
 
-To run thermal control automatically at boot, create a systemd service:
+To run thermal control automatically at boot, use the installer script:
 
-### 1. Create Service File
-
-```bash
-sudo nano /etc/systemd/system/thermal-fan-control.service
-```
-
-Add:
-```ini
-[Unit]
-Description=Thermal-Controlled Case Fans
-After=multi-user.target
-
-[Service]
-Type=simple
-User=root
-WorkingDirectory=/home/mover/octa/src/fan
-ExecStart=/home/mover/.octa/bin/python3 thermal_fan_controller.py --mode temp --group2 0
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### 2. Enable and Start
+### Quick Install (Recommended)
 
 ```bash
+cd /home/octa/octa/src/fan
+./install_thermal_service.sh
+```
+
+This will:
+- Install the systemd service file
+- Enable auto-start at boot
+- Start the service immediately
+- Display status and useful commands
+
+### Manual Installation
+
+If you prefer manual setup:
+
+#### 1. Copy Service File
+
+```bash
+sudo cp thermal-fan-control.service /etc/systemd/system/
 sudo systemctl daemon-reload
+```
+
+#### 2. Enable and Start
+
+```bash
 sudo systemctl enable thermal-fan-control.service
 sudo systemctl start thermal-fan-control.service
 ```
 
-### 3. Check Status
+#### 3. Check Status
 
 ```bash
 sudo systemctl status thermal-fan-control.service
 ```
 
-### 4. View Logs
+#### 4. View Logs
 
 ```bash
+# Watch live logs
 sudo journalctl -u thermal-fan-control.service -f
+
+# View recent logs
+sudo journalctl -u thermal-fan-control.service -n 50
+```
+
+### Service Configuration
+
+The service includes:
+- **Auto-restart**: Restarts automatically if it crashes
+- **Resource limits**: Limited to 50MB RAM and 10% CPU
+- **Dependencies**: Waits for GPIO init service
+- **Logging**: Structured logs to systemd journal (reduced frequency when running as service)
+- **Clean shutdown**: Proper signal handling
+
+### Modifying Service Behavior
+
+To change how the service runs (update interval, Group 2 speed, etc.), edit the wrapper script:
+
+```bash
+nano /home/octa/octa/src/fan/start_thermal_control.sh
+```
+
+Modify the `exec` line to change parameters:
+
+```bash
+#!/bin/bash
+# Wrapper script to start thermal fan controller
+
+cd /home/octa/octa/src/fan || exit 1
+# Example: Change interval to 5s and enable Group 2 at 75%
+exec /home/octa/.octa/bin/python3 thermal_fan_controller.py --mode temp --interval 5.0 --group2 75
+```
+
+Then restart the service:
+
+```bash
+sudo systemctl restart thermal-fan-control.service
+```
+
+**Common modifications:**
+- Change `--interval 5.0` to adjust temperature check frequency (default: 2.0)
+- Change `--group2 75` to run air sampling fans at constant 75% (default: 0)
+- Change `--mode state` to follow Pi's exact fan behavior instead of smooth curve
+
+### Disabling Auto-Start
+
+To stop the service and prevent it from starting at boot:
+
+```bash
+sudo systemctl stop thermal-fan-control.service
+sudo systemctl disable thermal-fan-control.service
+```
+
+To re-enable:
+
+```bash
+sudo systemctl enable thermal-fan-control.service
+sudo systemctl start thermal-fan-control.service
 ```
 
 ## Customizing Temperature Curves
@@ -191,9 +249,33 @@ STATE_TO_PERCENT = {
 }
 ```
 
-## Monitoring Temperature
+## Monitoring Performance
 
-### Check Current Temperature
+### Resource Usage
+
+Check service resource usage:
+
+```bash
+# Memory usage
+ps aux | grep thermal_fan_controller
+# RSS column shows memory in KB (expect ~15000-25000 KB)
+
+# CPU usage
+top -p $(pgrep -f thermal_fan_controller)
+# CPU% should be near 0.0% with occasional 0.3% spikes
+
+# Systemd resource accounting
+systemctl show thermal-fan-control.service --property=MemoryCurrent,CPUUsageNSec
+```
+
+**Expected usage:**
+- Memory: 15-25 MB (0.4-0.6% of 4GB)
+- CPU: 0.05% average with 2s polling
+- Negligible disk I/O (sysfs reads only)
+
+### Temperature Monitoring
+
+Check current temperature:
 ```bash
 cat /sys/class/thermal/thermal_zone0/temp | awk '{print $1/1000 "°C"}'
 ```
@@ -203,12 +285,12 @@ Or:
 vcgencmd measure_temp
 ```
 
-### Check Pi Fan State
+Check Pi Fan State:
 ```bash
 cat /sys/class/thermal/cooling_device0/cur_state
 ```
 
-### Watch Temperature in Real-Time
+Watch temperature in real-time:
 ```bash
 watch -n 1 'vcgencmd measure_temp'
 ```
@@ -251,7 +333,7 @@ sudo journalctl -u thermal-fan-control.service -n 50
 Verify Python path:
 ```bash
 which python3
-ls -la /home/mover/.octa/bin/python3
+ls -la /home/octa/.octa/bin/python3
 ```
 
 ## Command Reference

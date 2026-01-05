@@ -3,18 +3,25 @@
 Mobile Air Quality Monitor (MAQM) - Main Data Logger
 Integrates GNSS (u-blox), SEN66 (Sensirion), and SpecSensor (DGS2-970)
 Logs unified data to CSV with 1-second sampling and 60-second buffered writes
+Controls air sampling fans (Group 2) during data collection
 """
 
 import time
 import csv
 import serial
 import os
+import sys
+import signal
 from datetime import datetime
 from smbus2 import SMBus, i2c_msg
 from pynmeagps import NMEAReader
 from sensirion_i2c_driver import LinuxI2cTransceiver, I2cConnection, CrcCalculator
 from sensirion_driver_adapters.i2c_adapter.i2c_channel import I2cChannel
 from sensirion_i2c_sen66.device import Sen66Device
+
+# Add parent directory to path for fan controller import
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'fan'))
+from dual_fan_controller import DualFanController
 
 # ============================================================================
 # Configuration
@@ -33,13 +40,16 @@ SEN66_I2C_ADDR = 0x6B
 
 # SpecSensor Configuration
 SPEC_CO_SERIAL_PORT = "/dev/ttyAMA0"
-SPEC_O3_SERIAL_PORT = "/dev/ttyAMA3"
-SPEC_NO2_SERIAL_PORT = "/dev/ttyAMA1"
+SPEC_O3_SERIAL_PORT = "/dev/ttyAMA1"
+SPEC_NO2_SERIAL_PORT = "/dev/ttyAMA3"
 SPEC_BAUDRATE = 9600
 
 # Logging Configuration
 CSV_BUFFER_INTERVAL = 60  # Write to CSV every 60 seconds
 SAMPLE_INTERVAL = 1.0     # Sample every 1 second
+
+# Fan Configuration
+FAN_SPEED_PERCENT = 40    # Default air sampling fan speed (Group 2)
 
 
 # ============================================================================
@@ -206,13 +216,14 @@ class MAQMLogger:
     """Main data logger integrating all sensors"""
 
     def __init__(self):
-        # Save CSV to /home/mover/octa/data/ directory
-        csv_dir = "/home/mover/octa/data"
+        # Save CSV to /home/octa/octa/data/ directory
+        csv_dir = "/home/octa/octa/data"
         os.makedirs(csv_dir, exist_ok=True)  # Create directory if it doesn't exist
         csv_filename = f"MAQM_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv"
         self.csv_file = os.path.join(csv_dir, csv_filename)
         self.buffer = []
         self.last_write_time = time.time()
+        self.running = True
 
         # Initialize sensors
         print("Initializing sensors...")
@@ -237,11 +248,24 @@ class MAQMLogger:
         self.spec_no2 = SpecSensor(port=SPEC_NO2_SERIAL_PORT)
         self.spec_o3 = SpecSensor(port=SPEC_O3_SERIAL_PORT)
 
+        # Initialize fan controller
+        print("Initializing air sampling fans...")
+        self.fans = DualFanController()
+
         # Initialize CSV
         self._initialize_csv()
 
+        # Setup signal handlers for graceful shutdown
+        signal.signal(signal.SIGTERM, self._signal_handler)
+        signal.signal(signal.SIGINT, self._signal_handler)
+
         print(f"Logging to: {self.csv_file}")
         print("=" * 80)
+
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals (SIGTERM, SIGINT)"""
+        print(f"\nReceived signal {signum}, initiating graceful shutdown...")
+        self.running = False
 
     def _initialize_csv(self):
         """Create CSV file with headers"""
@@ -409,11 +433,13 @@ class MAQMLogger:
     def run(self):
         """Main logging loop"""
         print("Starting data collection...")
+        print(f"Starting air sampling fans at {FAN_SPEED_PERCENT}%...")
+        self.fans.set_group2_speed(FAN_SPEED_PERCENT)
         print("Press Ctrl+C to stop")
         print("=" * 80)
 
         try:
-            while True:
+            while self.running:
                 loop_start = time.time()
 
                 # Collect data from all sensors
@@ -432,7 +458,7 @@ class MAQMLogger:
                 sleep_time = max(0, SAMPLE_INTERVAL - elapsed)
                 time.sleep(sleep_time)
 
-        except KeyboardInterrupt:
+        finally:
             print("\n" + "=" * 80)
             print("Stopping data collection...")
 
@@ -443,13 +469,15 @@ class MAQMLogger:
 
             print("Shutdown complete.")
             print("=" * 80)
-
-        finally:
             self.cleanup()
 
     def cleanup(self):
-        """Clean up sensor connections"""
+        """Clean up sensor connections and stop fans"""
         try:
+            print("Stopping air sampling fans...")
+            self.fans.cleanup()
+
+            print("Stopping sensors...")
             self.sen66.stop_measurement()
             self.sen66_transceiver.close()
             self.gnss.close()

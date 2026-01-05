@@ -6,14 +6,36 @@ Thermal-Controlled Fan Controller
 Automatically controls Group 1 (heat sink) fans based on CPU temperature,
 following the same logic as the Raspberry Pi 5's active cooler.
 
-Group 1 fans will automatically adjust speed based on temperature.
-Group 2 (air sampling) fans remain under manual control.
+ONLY controls Group 1 (GPIO12, GPIO18) - heat sink fans.
+Does NOT touch Group 2 (GPIO13, GPIO19) - air sampling fans controlled by MAQM logger.
 """
 
 import time
 import signal
 import sys
-from dual_fan_controller import DualFanController
+import logging
+import subprocess
+import atexit
+
+try:
+    from rpi_hardware_pwm import HardwarePWM
+except ImportError:
+    print("ERROR: rpi-hardware-pwm not installed.")
+    print("Install with: sudo pip3 install rpi-hardware-pwm")
+    sys.exit(1)
+
+
+def setup_logging():
+    """Configure logging for systemd journal."""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(levelname)s: %(message)s',
+        stream=sys.stdout
+    )
+    return logging.getLogger(__name__)
+
+
+logger = setup_logging()
 
 
 class ThermalMonitor:
@@ -113,10 +135,84 @@ class ThermalMonitor:
         return ThermalMonitor.STATE_TO_PERCENT.get(state, 0)
 
 
+class Group1FanController:
+    """
+    Direct PWM controller for Group 1 (heat sink) fans ONLY.
+    Does NOT initialize or control Group 2 GPIOs.
+    """
+
+    # Group 1 GPIO configuration
+    GROUP1_GPIOS = [12, 18]  # Heat sink fans only
+    PWM_CONFIG = {
+        12: {'chip': 0, 'channel': 0},  # GPIO12 = PWM0_CHAN0
+        18: {'chip': 0, 'channel': 2}   # GPIO18 = PWM0_CHAN2
+    }
+    DEFAULT_FREQUENCY = 25000  # 25 kHz
+
+    def __init__(self, frequency=None):
+        """Initialize Group 1 PWM controllers only."""
+        self.frequency = frequency or self.DEFAULT_FREQUENCY
+        self.pwm_channels = {}
+        self.current_speed = 0
+
+        # Initialize ONLY Group 1 GPIOs
+        for gpio in self.GROUP1_GPIOS:
+            self._init_pwm(gpio)
+
+        # Register cleanup
+        atexit.register(self._emergency_stop)
+
+    def _init_pwm(self, gpio):
+        """Initialize a single PWM channel."""
+        # Configure GPIO for PWM (GPIO12 uses ALT0, GPIO18 uses ALT3)
+        alt_function = 'a0' if gpio == 12 else 'a3'
+        subprocess.run(['sudo', 'pinctrl', 'set', str(gpio), 'op', alt_function],
+                      check=False, capture_output=True)
+
+        # Initialize hardware PWM
+        config = self.PWM_CONFIG[gpio]
+        pwm = HardwarePWM(pwm_channel=config['channel'], hz=self.frequency, chip=config['chip'])
+        pwm.start(0)  # Start at 0%
+
+        self.pwm_channels[gpio] = pwm
+
+    def set_speed(self, percent):
+        """Set speed for Group 1 fans."""
+        if not 0 <= percent <= 100:
+            raise ValueError(f"Percent must be between 0 and 100, got {percent}")
+
+        for gpio in self.GROUP1_GPIOS:
+            self.pwm_channels[gpio].change_duty_cycle(percent)
+
+        self.current_speed = percent
+
+    def get_speed(self):
+        """Get current speed."""
+        return self.current_speed
+
+    def _emergency_stop(self):
+        """Emergency stop - set Group 1 GPIOs LOW."""
+        try:
+            for gpio in self.GROUP1_GPIOS:
+                subprocess.run(['sudo', 'pinctrl', 'set', str(gpio), 'op', 'dl'],
+                              check=False, capture_output=True, timeout=1)
+        except:
+            pass
+
+    def cleanup(self):
+        """Clean up and stop fans."""
+        self.set_speed(0)
+        time.sleep(0.1)
+        for gpio, pwm in self.pwm_channels.items():
+            pwm.stop()
+            subprocess.run(['sudo', 'pinctrl', 'set', str(gpio), 'op', 'dl'],
+                          check=False, capture_output=True)
+
+
 class ThermalFanController:
     """
-    Automatic thermal control for Group 1 fans.
-    Group 2 fans remain under manual control.
+    Automatic thermal control for Group 1 fans ONLY.
+    Does NOT touch Group 2 fans (reserved for MAQM logger).
     """
 
     def __init__(self, mode='state', update_interval=2.0):
@@ -130,33 +226,21 @@ class ThermalFanController:
         self.mode = mode
         self.update_interval = update_interval
         self.running = False
-        self.fans = DualFanController()
-
-        # Group 2 manual speed
-        self.group2_speed = 0
+        self.fans = Group1FanController()
 
         # Register signal handlers
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
 
-        print(f"\nThermal Fan Controller initialized:")
-        print(f"  Mode: {'Follow Pi fan state' if mode == 'state' else 'Smooth temperature curve'}")
-        print(f"  Update interval: {update_interval}s")
-        print(f"  Group 1: AUTO (thermal-controlled)")
-        print(f"  Group 2: MANUAL")
-
-    def set_group2_speed(self, percent):
-        """Set Group 2 (air sampling) fan speed manually."""
-        self.group2_speed = percent
-        self.fans.set_group2_speed(percent)
-
-    def get_group2_speed(self):
-        """Get current Group 2 speed."""
-        return self.group2_speed
+        logger.info("Thermal Fan Controller initialized (Group 1 ONLY)")
+        logger.info(f"  Mode: {'Follow Pi fan state' if mode == 'state' else 'Smooth temperature curve'}")
+        logger.info(f"  Update interval: {update_interval}s")
+        logger.info(f"  Controlling: GPIO12, GPIO18 (Group 1 heat sink fans)")
+        logger.info(f"  NOT touching: GPIO13, GPIO19 (Group 2 reserved for MAQM)")
 
     def _signal_handler(self, signum, _):
         """Handle shutdown signals."""
-        print(f"\nReceived signal {signum}, stopping...")
+        logger.info(f"Received signal {signum}, stopping...")
         self.stop()
         sys.exit(0)
 
@@ -178,26 +262,41 @@ class ThermalFanController:
     def run(self):
         """Run continuous thermal monitoring loop."""
         self.running = True
-        print("\nStarting thermal monitoring...")
-        print("Press Ctrl+C to stop\n")
+        logger.info("Starting thermal monitoring...")
+        if sys.stdout.isatty():
+            print("Press Ctrl+C to stop\n")
+
+        # Counter for periodic logging when running as service
+        log_counter = 0
+        log_interval = int(30 / self.update_interval)  # Log every 30 seconds
 
         try:
             while self.running:
                 temp, state, percent = self.update()
 
-                # Update Group 1 fans
-                self.fans.set_group1_speed(percent)
+                # Update Group 1 fans only
+                self.fans.set_speed(percent)
 
                 # Display status
-                if self.mode == 'state':
-                    print(f"Temp: {temp:5.1f}°C | Pi Fan State: {state} | Group 1: {percent:3d}% | Group 2: {self.group2_speed:3d}%")
+                if sys.stdout.isatty():
+                    # Running manually in terminal - show every update
+                    if self.mode == 'state':
+                        print(f"Temp: {temp:5.1f}°C | Pi Fan State: {state} | Group 1: {percent:3d}%")
+                    else:
+                        print(f"Temp: {temp:5.1f}°C | Group 1: {percent:3d}%")
                 else:
-                    print(f"Temp: {temp:5.1f}°C | Group 1: {percent:3d}% | Group 2: {self.group2_speed:3d}%")
+                    # Running as service - log every 30 seconds (based on iteration count)
+                    if log_counter % log_interval == 0:
+                        if self.mode == 'state':
+                            logger.info(f"Temp: {temp:5.1f}°C | Pi Fan State: {state} | G1: {percent:3d}%")
+                        else:
+                            logger.info(f"Temp: {temp:5.1f}°C | G1: {percent:3d}%")
+                    log_counter += 1
 
                 time.sleep(self.update_interval)
 
         except KeyboardInterrupt:
-            print("\n\nStopping thermal control...")
+            logger.info("Stopping thermal control...")
             self.stop()
 
     def stop(self):
@@ -207,29 +306,25 @@ class ThermalFanController:
 
 
 def main():
-    """Demo program showing both thermal control modes."""
+    """Demo program showing thermal control for Group 1 (heat sink) fans only."""
     import argparse
 
-    parser = argparse.ArgumentParser(description='Thermal-controlled fan management')
+    parser = argparse.ArgumentParser(description='Thermal-controlled fan management (Group 1 only)')
     parser.add_argument('--mode', choices=['state', 'temp'], default='temp',
                        help='Control mode: "state" follows Pi fan, "temp" uses smooth curve (default: temp)')
     parser.add_argument('--interval', type=float, default=2.0,
                        help='Update interval in seconds (default: 2.0)')
-    parser.add_argument('--group2', type=int, default=0, metavar='PERCENT',
-                       help='Group 2 (air sampling) fan speed 0-100%% (default: 0)')
 
     args = parser.parse_args()
 
     print("=" * 70)
-    print("Thermal Fan Controller - Raspberry Pi 5")
+    print("Thermal Fan Controller - Raspberry Pi 5 (Group 1 Only)")
+    print("=" * 70)
+    print("NOTE: This controller only manages Group 1 (GPIO12, GPIO18)")
+    print("      Group 2 (GPIO13, GPIO19) is reserved for MAQM logger")
     print("=" * 70)
 
     controller = ThermalFanController(mode=args.mode, update_interval=args.interval)
-
-    # Set Group 2 speed if specified
-    if args.group2 > 0:
-        print(f"\nSetting Group 2 (air sampling) to {args.group2}%")
-        controller.set_group2_speed(args.group2)
 
     # Run thermal control
     controller.run()

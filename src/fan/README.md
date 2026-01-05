@@ -19,7 +19,7 @@ All fans use standard 4-wire PWM pinout:
 
 ### 1. Install GPIO Init Service (one-time setup)
 ```bash
-cd /home/mover/octa/src/fan
+cd /home/octa/octa/src/fan
 ./install_quad_fan_gpio.sh
 ```
 
@@ -30,7 +30,7 @@ This ensures all 4 fan GPIOs default to LOW (fans off) at boot.
 #### Option A: Automatic Thermal Control (Recommended)
 Group 1 fans automatically follow CPU temperature (like the Pi's cooler):
 ```bash
-sudo /home/mover/.octa/bin/python3 thermal_fan_controller.py
+sudo /home/octa/.octa/bin/python3 thermal_fan_controller.py
 ```
 
 See [THERMAL_CONTROL.md](THERMAL_CONTROL.md) for details.
@@ -38,7 +38,7 @@ See [THERMAL_CONTROL.md](THERMAL_CONTROL.md) for details.
 #### Option B: Manual Control
 Interactive keyboard control of both groups:
 ```bash
-sudo /home/mover/.octa/bin/python3 dual_fan_demo.py
+sudo /home/octa/.octa/bin/python3 dual_fan_demo.py
 ```
 
 **Display:**
@@ -86,8 +86,11 @@ with DualFanController() as fans:
 | `dual_fan_controller.py` | Main controller library |
 | `dual_fan_demo.py` | Interactive keyboard demo |
 | `thermal_fan_controller.py` | **Automatic thermal control** (follows CPU temp) |
+| `start_thermal_control.sh` | Wrapper script for systemd service |
+| `thermal-fan-control.service` | Systemd service for auto-start at boot |
+| `install_thermal_service.sh` | **Thermal service installer** |
 | `quad-fan-gpio-init.service` | Systemd service (sets GPIOs LOW at boot) |
-| `install_quad_fan_gpio.sh` | Service installer |
+| `install_quad_fan_gpio.sh` | GPIO init service installer |
 | `QUAD_FAN_SETUP.md` | Detailed setup guide |
 | `THERMAL_CONTROL.md` | **Thermal control documentation** |
 

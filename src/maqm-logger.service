@@ -1,0 +1,16 @@
+[Unit]
+Description=Mobile Air Quality Monitor (MAQM) Data Logger
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/home/octa/octa/src/start_maqm_logger.sh
+WorkingDirectory=/home/octa/octa/src
+StandardOutput=journal
+StandardError=journal
+Restart=on-failure
+RestartSec=10
+User=root
+
+[Install]
+WantedBy=multi-user.target

@@ -23,6 +23,15 @@ from sensirion_i2c_sen66.device import Sen66Device
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'fan'))
 from dual_fan_controller import DualFanController
 
+# Try to import tachometer monitoring (optional, fail gracefully if lgpio not available)
+try:
+    from read_group2_tachometer import TachometerReader
+    import lgpio
+    TACHOMETER_AVAILABLE = True
+except ImportError:
+    TACHOMETER_AVAILABLE = False
+    print("WARNING: Tachometer monitoring disabled (lgpio not available)")
+
 # ============================================================================
 # Configuration
 # ============================================================================
@@ -252,6 +261,35 @@ class MAQMLogger:
         print("Initializing air sampling fans...")
         self.fans = DualFanController()
 
+        # Initialize tachometer monitoring for Group 2 fans
+        self.tachometers = {}
+        self.gpio_chip = None
+        if TACHOMETER_AVAILABLE:
+            try:
+                print("Initializing tachometer monitoring for air sampling fans...")
+                self.gpio_chip = lgpio.gpiochip_open(0)
+
+                # Group 2 tachometer pins: {pwm_gpio: tach_gpio}
+                tach_pins = {
+                    13: 6,   # GPIO13 PWM → GPIO6 Tach (Fan 1)
+                    19: 26   # GPIO19 PWM → GPIO26 Tach (Fan 2)
+                }
+
+                for pwm_gpio, tach_gpio in tach_pins.items():
+                    try:
+                        tach = TachometerReader(self.gpio_chip, tach_gpio)
+                        self.tachometers[pwm_gpio] = tach
+                        print(f"  Tachometer initialized: GPIO{tach_gpio} monitors fan on GPIO{pwm_gpio}")
+                    except Exception as e:
+                        print(f"  WARNING: Failed to initialize tachometer on GPIO{tach_gpio}: {e}")
+
+                if self.tachometers:
+                    print("Tachometer monitoring enabled")
+                else:
+                    print("WARNING: No tachometers initialized")
+            except Exception as e:
+                print(f"WARNING: Failed to initialize tachometer monitoring: {e}")
+
         # Initialize CSV
         self._initialize_csv()
 
@@ -262,7 +300,7 @@ class MAQMLogger:
         print(f"Logging to: {self.csv_file}")
         print("=" * 80)
 
-    def _signal_handler(self, signum, frame):
+    def _signal_handler(self, signum, _frame):
         """Handle shutdown signals (SIGTERM, SIGINT)"""
         print(f"\nReceived signal {signum}, initiating graceful shutdown...")
         self.running = False
@@ -275,6 +313,8 @@ class MAQMLogger:
             "gnss_lat", "gnss_lon", "gnss_alt", "gnss_speed",
             "gnss_fix_status", "gnss_quality", "gnss_num_sv",
             "gnss_pdop", "gnss_hdop", "gnss_vdop",
+            # Fan tachometer fields (Group 2 air sampling fans)
+            "fan1_rpm", "fan2_rpm",
             # SEN66 fields
             "pm1p0", "pm2p5", "pm4p0", "pm10p0",
             "sen66_humidity", "sen66_temperature", "voc_index", "nox_index", "co2",
@@ -314,6 +354,25 @@ class MAQMLogger:
             "gnss_pdop": gnss_data["pdop"],
             "gnss_hdop": gnss_data["hdop"],
             "gnss_vdop": gnss_data["vdop"]
+        })
+
+        # Read fan tachometers (Group 2 air sampling fans)
+        fan1_rpm = None
+        fan2_rpm = None
+        if self.tachometers:
+            try:
+                # Update RPM readings
+                for pwm_gpio, tach in self.tachometers.items():
+                    rpm = tach.update_rpm()
+                    if pwm_gpio == 13:
+                        fan1_rpm = rpm
+                    elif pwm_gpio == 19:
+                        fan2_rpm = rpm
+            except Exception:
+                pass
+        row.update({
+            "fan1_rpm": fan1_rpm,
+            "fan2_rpm": fan2_rpm
         })
 
         # Read SEN66
@@ -424,10 +483,15 @@ class MAQMLogger:
         no2_str = f"{row['spec_no2_ppm']:.3f}" if row['spec_no2_ppm'] is not None else 'N/A'
         o3_str = f"{row['spec_o3_ppm']:.3f}" if row['spec_o3_ppm'] is not None else 'N/A'
 
+        # Fan RPM data
+        fan1_rpm_str = f"{row['fan1_rpm']:.0f}" if row['fan1_rpm'] is not None else 'N/A'
+        fan2_rpm_str = f"{row['fan2_rpm']:.0f}" if row['fan2_rpm'] is not None else 'N/A'
+
         print(f"[{datetime.now().strftime('%H:%M:%S')}] "
               f"GPS:{fix_status} {lat_str}°,{lon_str}° {speed_str}kn SV:{num_sv_str} P/H/V:{pdop_str}/{hdop_str}/{vdop_str} | "
               f"T:{temp_str}°C RH:{humid_str}% PM2.5:{pm25_str} CO2:{co2_str} VOC:{voc_str} NOx:{nox_str} | "
               f"CO:{co_str} NO2:{no2_str} O3:{o3_str}ppm | "
+              f"Fan:{fan1_rpm_str}/{fan2_rpm_str}RPM | "
               f"Buf:{len(self.buffer)}")
 
     def run(self):
@@ -476,6 +540,17 @@ class MAQMLogger:
         try:
             print("Stopping air sampling fans...")
             self.fans.cleanup()
+
+            # Clean up tachometers
+            if self.tachometers:
+                print("Stopping tachometer monitoring...")
+                for tach in self.tachometers.values():
+                    tach.cleanup()
+                if self.gpio_chip is not None:
+                    try:
+                        lgpio.gpiochip_close(self.gpio_chip)
+                    except:
+                        pass
 
             print("Stopping sensors...")
             self.sen66.stop_measurement()

@@ -168,6 +168,16 @@ sudo /home/octa/.octa/bin/python3 thermal_fan_controller.py
 # Test both fan groups independently
 cd /home/octa/octa/src/fan
 sudo /home/octa/.octa/bin/python3 dual_fan_controller.py
+
+# Test fan tachometer (RPM reading) - Group 2 priority
+cd /home/octa/octa/src/fan
+sudo /home/octa/.octa/bin/python3 test_tachometer.py
+
+# Test Group 1 tachometer (optional)
+sudo /home/octa/.octa/bin/python3 test_tachometer.py --group1
+
+# Full demo with PWM control and RPM monitoring
+sudo /home/octa/.octa/bin/python3 dual_fan_controller_with_tach.py
 ```
 
 ### Check CSV Data Output
@@ -201,12 +211,26 @@ cat /sys/class/thermal/thermal_zone0/temp | awk '{printf "%.1f°C\n", $1/1000}'
 
 The system uses **4 PWM fans in 2 independent groups** with clear separation of control:
 
-| Group | GPIOs | Physical Pins | Purpose | Controlled By |
-|-------|-------|---------------|---------|---------------|
+### PWM Control Pins
+
+| Group | PWM GPIOs | Physical Pins | Purpose | Controlled By |
+|-------|-----------|---------------|---------|---------------|
 | **Group 1** | GPIO12, GPIO18 | 32, 12 | Heat sink cooling | `thermal-fan-control.service` |
 | **Group 2** | GPIO13, GPIO19 | 33, 35 | Air sampling | `maqm-logger.service` |
 
-**Key Design Feature**: The thermal fan controller has been specifically designed to **only initialize and control Group 1 GPIOs**. It never touches Group 2 GPIOs, ensuring both services can run simultaneously without any GPIO conflicts or interference.
+### Tachometer (RPM Reading) Pins
+
+| Group | Fan | PWM Pin | Tach GPIO | Tach Pin | Layout |
+|-------|-----|---------|-----------|----------|--------|
+| **Group 2** | Fan 1 | 33 (GPIO13) | GPIO6 | 31 | Adjacent odd pins ✓ |
+| **Group 2** | Fan 2 | 35 (GPIO19) | GPIO26 | 37 | Adjacent odd pins ✓ |
+| **Group 1** | Fan 1 | 12 (GPIO18) | GPIO23 | 16 | Adjacent even pins ✓ |
+| **Group 1** | Fan 2 | 32 (GPIO12) | GPIO16 | 36 | Adjacent even pins ✓ |
+
+**Key Design Features**:
+- The thermal fan controller has been specifically designed to **only initialize and control Group 1 GPIOs**. It never touches Group 2 GPIOs, ensuring both services can run simultaneously without any GPIO conflicts or interference.
+- Tachometer pins are **adjacent** to their PWM pairs for clean wiring (odd pins in left column, even pins in right column).
+- See **[src/fan/TACHOMETER_SETUP.md](src/fan/TACHOMETER_SETUP.md)** for complete tachometer wiring and setup instructions.
 
 ---
 
